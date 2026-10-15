@@ -3,6 +3,7 @@ name = "desktop"
 version = "0.1.0"
 edition = "2021"
 description = "CipherChat desktop app: paste-in/copy-out encryption with a local key vault"
+license = "MIT"
 
 [lib]
 name = "cipherchat_desktop"
