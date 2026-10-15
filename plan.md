@@ -143,13 +143,13 @@ Media, voice notes, reactions, and message editing. Quoted replies will quote th
 - [ ] Key entry and storage, encrypted at rest
 - [ ] End-to-end check: encrypt in the app, paste into WhatsApp, decrypt on another machine
 
-### M4 — Android
+### M3 — Android
 - [ ] `mobile` crate with uniffi bindings to Kotlin
 - [ ] Keyboard (IME) that encrypts on send
 - [ ] Decrypt path: start with a share target, then an accessibility overlay
 - [ ] Keys in Android Keystore
 
-### M5 — v2 keys
+### M4 — v2 keys
 - [ ] X25519 identity keys and per-contact key derivation
 - [ ] QR key exchange and safety-number verification
 - [ ] Group keys with rotation (if groups are in scope)
