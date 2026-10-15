@@ -11,7 +11,7 @@ A layer that encrypts message text before it reaches WhatsApp and decrypts it af
 
 | Decision | Default until decided |
 |---|---|
-| First platform: WhatsApp Web or Android | WhatsApp Web (browser extension) |
+| First platform | Desktop app (clipboard workflow) |
 | Group chats in v1 | 1:1 chats only |
 
 ---
@@ -20,23 +20,21 @@ A layer that encrypts message text before it reaches WhatsApp and decrypts it af
 
 | Option | Encrypt | Decrypt | Effort | Notes |
 |---|---|---|---|---|
-| WhatsApp Web/Desktop browser extension | Hook the compose box and swap the text on send | Content script finds marked messages in the DOM and replaces them inline | Low | Best UX; breaks when Meta changes the DOM |
 | Android keyboard plus accessibility overlay | Custom IME encrypts on send | Accessibility service reads the screen and overlays plaintext | Medium | Seamless; the permission is very powerful and needs care |
 | iOS keyboard extension | Keyboard encrypts | Copy, then a share or app extension decrypts | Medium | iOS keyboards can't read the chat, so receiving is clunky |
-| Standalone clipboard app | Paste in, copy out | Same | Trivial | Testing aid only |
+| Standalone desktop app | Paste in, copy out | Same | Low | Out-of-band; never touches the chat client |
 
-**Order:** browser extension (MVP), then Android, then maybe iOS.
+**Order:** desktop app (MVP), then Android, then maybe iOS.
 
 ## 2. Architecture (Rust)
 
-Rust compiles to WASM for the extension and to Android/iOS libraries through uniffi. The RustCrypto crates are pure Rust, so there's no C library to cross-compile.
+Rust compiles to the desktop app and to Android/iOS libraries through uniffi. The RustCrypto crates are pure Rust, so there's no C library to cross-compile.
 
 ```
 cipherchat/                  (cargo workspace)
 ├── core/        # pure crypto + wire format, no I/O, no platform deps
-├── wasm/        # wasm-bindgen wrapper → browser extension
-├── mobile/      # uniffi wrapper → Kotlin (Android), Swift (iOS later)
-└── extension/   # TS content script for WhatsApp Web, calls wasm/
+├── desktop/     # Tauri desktop app
+└── mobile/      # uniffi wrapper → Kotlin (Android), Swift (iOS later)
 ```
 
 ### Crates
@@ -48,8 +46,8 @@ cipherchat/                  (cargo workspace)
 | Key exchange (v2) | `x25519-dalek` |
 | Encoding | `base64` (URL-safe, no padding) |
 | Wiping secrets from memory | `zeroize` |
-| Randomness | `rand_core` with `OsRng`, plus `getrandom` with the `js` feature on the WASM target (required to build) |
-| Bindings | `wasm-bindgen`, `uniffi` |
+| Randomness | `rand_core` with `OsRng` |
+| Bindings | `uniffi` |
 
 ## 3. Cryptography
 
@@ -91,7 +89,7 @@ impl ChatKey {
 
 pub fn encrypt(key: &ChatKey, plaintext: &str) -> String;           // "🔒1.<b64>"
 pub fn decrypt(key: &ChatKey, wire: &str) -> Result<String, Error>;
-pub fn is_encrypted(text: &str) -> bool;                             // cheap prefix check for DOM scanning
+pub fn is_encrypted(text: &str) -> bool;                             // cheap prefix check
 pub fn key_id_of(wire: &str) -> Option<[u8; 4]>;                     // pick the right key before decrypting
 
 pub enum Error {
@@ -123,7 +121,7 @@ The distinct error variants let the UI show a useful message, such as "can't dec
 - Metadata: who talks to whom, when, and roughly how much
 - A compromised device
 - Recipients screenshotting
-- The extension or accessibility service itself, which sees plaintext and must be audited carefully
+- The accessibility service itself, which sees plaintext and must be audited carefully
 
 ## 8. Out of scope for v1
 
@@ -140,17 +138,10 @@ Media, voice notes, reactions, and message editing. Quoted replies will quote th
 - [ ] Tests: round-trip, tampered ciphertext, tampered header, wrong key, unknown version, malformed input
 - [ ] Fixed test vectors so the format can't drift by accident
 
-### M2 — WASM and a bare extension
-- [ ] `wasm` crate with wasm-bindgen exports
-- [ ] Extension popup with "encrypt this / decrypt this" boxes
-- [ ] Key entry and storage in extension storage, encrypted at rest
-- [ ] End-to-end check: encrypt in the popup, paste into WhatsApp, decrypt on another machine
-
-### M3 — WhatsApp Web DOM integration
-- [ ] MutationObserver that finds `🔒1.` messages and decrypts them inline
-- [ ] Intercept send to encrypt the compose box contents
-- [ ] Per-chat on/off toggle and lock indicator
-- [ ] Keep all WhatsApp-specific selectors in one file
+### M2 — Desktop app
+- [ ] Encrypt / decrypt workbench
+- [ ] Key entry and storage, encrypted at rest
+- [ ] End-to-end check: encrypt in the app, paste into WhatsApp, decrypt on another machine
 
 ### M4 — Android
 - [ ] `mobile` crate with uniffi bindings to Kotlin

@@ -2,16 +2,13 @@
 target/
 **/*.rs.bk
 
-# Node / extension
+# Node
 node_modules/
 dist/
 coverage/
 *.tsbuildinfo
 .npm/
 
-# wasm-pack output
-pkg/
-extension/src/wasm-pkg/
 
 # Env / secrets
 .env

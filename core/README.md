@@ -1,7 +1,6 @@
 # cipherchat core
 
-Pure-Rust, I/O-free text encryption for CipherChat. Used by the desktop app
-(and, until it is removed, the WASM wrapper for the browser extension).
+Pure-Rust, I/O-free text encryption for CipherChat. Used by the desktop app.
 
 ## API
 
