@@ -1,0 +1,33 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Node / extension
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.npm/
+
+# wasm-pack output
+pkg/
+extension/src/wasm-pkg/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Claude Code local settings
+.claude/settings.local.json
