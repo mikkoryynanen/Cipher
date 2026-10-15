@@ -35,6 +35,15 @@ describe("add key", () => {
     expect(keysSection(root).textContent).toContain("Added “Sam”");
   });
 
+  it("after generating a key, says what to do next and can export it for sharing", async () => {
+    const { api, root } = await openKeys();
+    await click(button(root, "Add key"));
+    expect(keysSection(root).textContent).toContain("give this key to your contact out of band");
+    await click(button(root, "Export this key to share"));
+    expect(api.exportKey).toHaveBeenCalled();
+    expect(keysSection(root).textContent).toContain("Never send it through a chat");
+  });
+
   it("derives from a passphrase, shows the salt to share and warns when short", async () => {
     const { api, root } = await openKeys({
       addKey: async () => ({ key: { id: "x", label: "p", fingerprint: "aaaa-bbbb" }, saltHex: "00".repeat(16), alreadyExists: false, weakPassphrase: true }),
@@ -50,6 +59,8 @@ describe("add key", () => {
     const text = keysSection(root).textContent ?? "";
     expect(text).toContain("00".repeat(16));
     expect(text).toContain("out of band");
+    await click(button(root, "Copy salt"));
+    expect(api.copy).toHaveBeenCalledWith("key", "00".repeat(16));
     expect(text).toContain("passphrase is short");
     expect($<HTMLInputElement>(root, "#add-pass").value).toBe("");
   });
@@ -131,15 +142,17 @@ describe("rename and settings", () => {
   it("saves clipboard settings and has no switch for exported keys", async () => {
     const api = fakeApi();
     const { root } = await mount(api);
-    await click(button(root, "Clipboard"));
+    await click(button(root, "Settings"));
     expect($<HTMLInputElement>(root, "#set-timeout").value).toBe("30");
     expect($<HTMLInputElement>(root, "#set-plain").checked).toBe(true);
     expect($<HTMLInputElement>(root, "#set-cipher").checked).toBe(false);
+    expect($<HTMLInputElement>(root, "#set-autocopy").checked).toBe(true);
     expect(root.textContent).toContain("Exported keys are always cleared.");
-    expect(root.querySelectorAll("#set-timeout, #set-plain, #set-cipher")).toHaveLength(3);
+    expect(root.querySelectorAll("#set-timeout, #set-plain, #set-cipher, #set-autocopy")).toHaveLength(4);
     type($(root, "#set-timeout"), "90");
     $<HTMLInputElement>(root, "#set-cipher").checked = true;
+    $<HTMLInputElement>(root, "#set-autocopy").checked = false;
     await click(button(root, "Save"));
-    expect(api.setClipboardSettings).toHaveBeenCalledWith({ timeoutSecs: 90, clearPlaintext: true, clearCiphertext: true });
+    expect(api.setClipboardSettings).toHaveBeenCalledWith({ timeoutSecs: 90, clearPlaintext: true, clearCiphertext: true, autoCopyCiphertext: false });
   });
 });

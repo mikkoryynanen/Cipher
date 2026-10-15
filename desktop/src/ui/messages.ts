@@ -23,9 +23,11 @@ export function describe(e: AppError | ErrorCode): string {
   return TEXT[code];
 }
 
-export const MIN_PASSPHRASE = 12;
-
-export const PASSPHRASE_HINT = `Use at least ${MIN_PASSPHRASE} characters. A long phrase of several words works well. If you forget it, your keys cannot be recovered.`;
+/** What to tell the user when creating a vault. `min` comes from the backend. */
+export function passphraseHint(min: number): string {
+  const length = min > 1 ? `Use at least ${min} characters. ` : "";
+  return `${length}A long phrase of several words works well. If you forget it, your keys cannot be recovered.`;
+}
 
 export const EXPORT_WARNING =
   "Share this key only out of band (in person, by phone call, or a password manager). Never send it through a chat.";

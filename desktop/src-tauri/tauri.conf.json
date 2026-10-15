@@ -11,7 +11,7 @@
   },
   "app": {
     "withGlobalTauri": false,
-    "windows": [{ "label": "main", "title": "CipherChat", "width": 900, "height": 700 }],
+    "windows": [{ "label": "main", "title": "CipherChat", "width": 1000, "height": 720, "minWidth": 640, "minHeight": 560 }],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     }

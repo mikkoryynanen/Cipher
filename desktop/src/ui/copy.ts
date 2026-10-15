@@ -1,5 +1,5 @@
 import type { CopyKind } from "../api";
-import { h } from "./dom";
+import { h, info, problem } from "./dom";
 import { describe } from "./messages";
 import type { Ctx } from "./types";
 
@@ -11,7 +11,7 @@ export function countdown(ctx: Ctx, note: HTMLElement, secs: number): void {
   if (old !== undefined) ctx.clear(old);
   let left = secs;
   const paint = () => {
-    note.textContent = `Copied. The clipboard will be cleared in ${left} s.`;
+    info(note, `Copied. The clipboard will be cleared in ${left} s.`);
   };
   paint();
   const id = ctx.every(() => {
@@ -19,7 +19,7 @@ export function countdown(ctx: Ctx, note: HTMLElement, secs: number): void {
     if (left <= 0) {
       ctx.clear(id);
       timers.delete(note);
-      note.textContent = "Clipboard cleared.";
+      info(note, "Clipboard cleared.");
     } else paint();
   }, 1000);
   timers.set(note, id);
@@ -38,9 +38,9 @@ export function copyButton(
     try {
       const out = await ctx.api.copy(kind, getText());
       if (out.clearsInSecs) countdown(ctx, note, out.clearsInSecs);
-      else note.textContent = "Copied. This is not cleared automatically.";
+      else info(note, "Copied. This is not cleared automatically.");
     } catch (e) {
-      note.textContent = describe(ctx.fail(e));
+      problem(note, describe(ctx.fail(e)));
     }
   });
   return btn;

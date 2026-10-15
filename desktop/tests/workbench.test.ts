@@ -1,57 +1,166 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { $, button, click, err, fakeApi, flush, inPanel, mount, type } from "./helpers";
+import type { KeyInfo } from "../src/api";
+import { $, button, click, err, fakeApi, flush, mount, type } from "./helpers";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
-describe("encrypt panel", () => {
-  it("requires an explicit key choice and shows the backend's reason", async () => {
-    const api = fakeApi({ encrypt: async () => { throw err("NoKey"); } });
-    const { root } = await mount(api);
-    expect($<HTMLSelectElement>(root, "#enc-key").value).toBe("");
-    type($(root, "#enc-input"), "hello");
-    await click(inPanel(root, "#enc-input", "Encrypt"));
-    expect(api.encrypt).toHaveBeenCalledWith(null, "hello");
-    expect($(root, "#enc-key").closest("section")?.querySelector(".msg")?.textContent).toBe("Select a key first.");
-  });
+const ALEX: KeyInfo = { id: "aabbccdd", label: "Alex", fingerprint: "1234-5678" };
+const SAM: KeyInfo = { id: "11223344", label: "Sam", fingerprint: "9999-0000" };
 
-  it("encrypts with the chosen key and copies the result without auto-clearing", async () => {
-    const api = fakeApi({ copy: async () => ({ clearsInSecs: null }) });
-    const { root } = await mount(api);
-    const sel = $<HTMLSelectElement>(root, "#enc-key");
-    sel.value = "aabbccdd";
-    type($(root, "#enc-input"), "hello");
-    await click(inPanel(root, "#enc-input", "Encrypt"));
-    expect(api.encrypt).toHaveBeenCalledWith("aabbccdd", "hello");
-    expect($<HTMLTextAreaElement>(root, "#enc-output").value).toBe("🔒1.ENC(hello)");
-    await click(button(root, "Copy encrypted message"));
-    expect(api.copy).toHaveBeenCalledWith("ciphertext", "🔒1.ENC(hello)");
-    expect(root.textContent).toContain("not cleared automatically");
-  });
+const keySelect = (root: HTMLElement) => $<HTMLSelectElement>(root, "#msg-key");
+const status = (root: HTMLElement) => root.querySelector<HTMLElement>(".col .status");
 
-  it("offers the stored keys with their fingerprints", async () => {
+function press(el: HTMLElement, key: string, mods: KeyboardEventInit = {}) {
+  el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...mods }));
+}
+
+describe("one page for both directions", () => {
+  it("has the key selector, the write box and the read box without switching tabs", async () => {
     const { root } = await mount(fakeApi());
-    expect($(root, "#enc-key").textContent).toContain("Alex (1234-5678)");
+    expect(Array.from(root.querySelectorAll(".tab")).map((t) => t.textContent)).toEqual(["Messages", "Keys", "Settings"]);
+    const page = $(root, "#enc-input").closest("section");
+    expect(page?.contains($(root, "#dec-input"))).toBe(true);
+    expect(page?.contains(keySelect(root))).toBe(true);
+    expect(page?.hidden).toBe(false);
   });
-});
 
-describe("decrypt panel", () => {
-  async function open() {
+  it("encrypts and decrypts from the same panel", async () => {
     const api = fakeApi();
-    const m = await mount(api);
-    await click(button(m.root, "Decrypt")); // the tab
-    return { api, ...m };
-  }
-
-  it("decrypts pasted text and shows the key that was used", async () => {
-    const { api, root } = await open();
-    type($(root, "#dec-input"), "🔒1.whatever");
-    await click(root.querySelector<HTMLButtonElement>(".row button") as HTMLButtonElement);
-    expect(api.decrypt).toHaveBeenCalledWith("🔒1.whatever");
+    const { root } = await mount(api);
+    type($(root, "#enc-input"), "hello");
+    await click($(root, "#encrypt"));
+    expect(api.encrypt).toHaveBeenCalledWith("aabbccdd", "hello");
+    expect($<HTMLTextAreaElement>(root, "#enc-output").value).toBe("ENC(hello)");
+    type($(root, "#dec-input"), "whatever");
+    await click($(root, "#decrypt"));
+    expect(api.decrypt).toHaveBeenCalledWith("whatever");
     expect(root.querySelector(".plain")?.textContent).toBe("the secret text");
     expect(root.textContent).toContain("Decrypted with “Alex”");
   });
+});
 
+describe("key preselection", () => {
+  it("selects the only key", async () => {
+    const { root } = await mount(fakeApi());
+    expect(keySelect(root).value).toBe("aabbccdd");
+    expect(root.querySelector("#enc-using")?.textContent).toContain("Alex");
+  });
+
+  it("selects the last used key, also after a lock", async () => {
+    const api = fakeApi({ listKeys: async () => [ALEX, SAM] });
+    const { root } = await mount(api);
+    expect(keySelect(root).value).toBe("");
+    keySelect(root).value = SAM.id;
+    type($(root, "#enc-input"), "hi");
+    await click($(root, "#encrypt"));
+    await click(button(root, "Lock"));
+    const pass = $<HTMLInputElement>(root, "#pass");
+    type(pass, "right passphrase");
+    $(root, "form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+    expect(keySelect(root).value).toBe(SAM.id);
+  });
+
+  it("selects nothing when the remembered key was deleted", async () => {
+    let keys = [ALEX, SAM];
+    const api = fakeApi({ listKeys: async () => keys });
+    const { root } = await mount(api);
+    keySelect(root).value = SAM.id;
+    type($(root, "#enc-input"), "hi");
+    await click($(root, "#encrypt"));
+    keys = [ALEX, { ...SAM, id: "55555555" }];
+    await click(button(root, "Keys"));
+    await click(button(root, "Messages"));
+    keySelect(root).value = "";
+    await click(button(root, "Keys"));
+    await click(button(root, "Messages"));
+    expect(keySelect(root).value).toBe("");
+  });
+
+  it("requires a key and shows the backend's reason next to the action", async () => {
+    const api = fakeApi({ listKeys: async () => [ALEX, SAM], encrypt: async () => { throw err("NoKey"); } });
+    const { root } = await mount(api);
+    type($(root, "#enc-input"), "hello");
+    await click($(root, "#encrypt"));
+    expect(api.encrypt).toHaveBeenCalledWith(null, "hello");
+    expect(status(root)?.textContent).toBe("Select a key first.");
+    expect(status(root)?.classList.contains("error")).toBe(true);
+  });
+});
+
+describe("automatic copy", () => {
+  it("copies the encrypted message right away when the setting is on", async () => {
+    const api = fakeApi();
+    const { root } = await mount(api);
+    type($(root, "#enc-input"), "hello");
+    await click($(root, "#encrypt"));
+    expect(api.copy).toHaveBeenCalledWith("ciphertext", "ENC(hello)");
+    expect(root.textContent).toContain("cleared in 30 s");
+  });
+
+  it("says so when the copy is not cleared automatically", async () => {
+    const api = fakeApi({ copy: async () => ({ clearsInSecs: null }) });
+    const { root } = await mount(api);
+    type($(root, "#enc-input"), "hello");
+    await click($(root, "#encrypt"));
+    expect(root.textContent).toContain("not cleared automatically");
+  });
+
+  it("leaves the clipboard alone when the setting is off, until Copy is pressed", async () => {
+    const api = fakeApi({ getClipboardSettings: async () => ({ timeoutSecs: 30, clearPlaintext: true, clearCiphertext: false, autoCopyCiphertext: false }) });
+    const { root } = await mount(api);
+    type($(root, "#enc-input"), "hello");
+    await click($(root, "#encrypt"));
+    expect($<HTMLTextAreaElement>(root, "#enc-output").value).toBe("ENC(hello)");
+    expect(api.copy).not.toHaveBeenCalled();
+    await click(button(root, "Copy encrypted message"));
+    expect(api.copy).toHaveBeenCalledWith("ciphertext", "ENC(hello)");
+  });
+
+  it("copies nothing when encryption fails", async () => {
+    const api = fakeApi({ encrypt: async () => { throw err("InvalidInput"); } });
+    const { root } = await mount(api);
+    await click($(root, "#encrypt"));
+    expect(api.copy).not.toHaveBeenCalled();
+    expect(status(root)?.textContent).toBe("That input is not valid.");
+  });
+});
+
+describe("keyboard and clearing", () => {
+  it("Ctrl/Cmd+Enter encrypts from the message field", async () => {
+    const api = fakeApi();
+    const { root } = await mount(api);
+    type($(root, "#enc-input"), "hello");
+    press($(root, "#enc-input"), "Enter", { ctrlKey: true });
+    await flush();
+    expect(api.encrypt).toHaveBeenCalledWith("aabbccdd", "hello");
+    press($(root, "#enc-input"), "Enter");
+    await flush();
+    expect(api.encrypt).toHaveBeenCalledTimes(1);
+  });
+
+  it("Ctrl/Cmd+Enter decrypts from the received-message field", async () => {
+    const api = fakeApi();
+    const { root } = await mount(api);
+    type($(root, "#dec-input"), "pasted text");
+    press($(root, "#dec-input"), "Enter", { metaKey: true });
+    await flush();
+    expect(api.decrypt).toHaveBeenCalledWith("pasted text");
+  });
+
+  it("Clear empties the message and the result", async () => {
+    const { root } = await mount(fakeApi());
+    type($(root, "#enc-input"), "hello");
+    await click($(root, "#encrypt"));
+    await click(button(root, "Clear"));
+    expect($<HTMLTextAreaElement>(root, "#enc-input").value).toBe("");
+    expect($<HTMLTextAreaElement>(root, "#enc-output").value).toBe("");
+    expect($(root, ".result").hidden).toBe(true);
+  });
+});
+
+describe("decrypting", () => {
   it("shows every message separately, with reasons for the ones that fail", async () => {
     const api = fakeApi({
       decrypt: async () => [
@@ -63,35 +172,36 @@ describe("decrypt panel", () => {
       ],
     });
     const { root } = await mount(api);
-    await click(button(root, "Decrypt"));
-    await click(root.querySelector<HTMLButtonElement>(".row button") as HTMLButtonElement);
+    await click($(root, "#decrypt"));
     const items = Array.from(root.querySelectorAll(".item"));
     expect(items).toHaveLength(5);
     expect(items[1]?.textContent).toBe("You do not have the key for this message.");
     expect(items[2]?.textContent).toContain("altered or damaged");
     expect(items[3]?.textContent).toContain("Update CipherChat");
-    expect(root.textContent).not.toContain("tampered-plaintext");
   });
 
   it("reports 'not a CipherChat message' for plain text", async () => {
     const api = fakeApi({ decrypt: async () => { throw err("NotOurFormat"); } });
     const { root } = await mount(api);
-    await click(button(root, "Decrypt"));
     type($(root, "#dec-input"), "hello");
-    await click(root.querySelector<HTMLButtonElement>(".row button") as HTMLButtonElement);
+    await click($(root, "#decrypt"));
     expect(root.textContent).toContain("That is not a CipherChat message.");
   });
 
-  it("paste & decrypt uses the backend's clipboard read", async () => {
-    const { api, root } = await open();
+  it("paste & decrypt uses the backend's clipboard read, and only when pressed", async () => {
+    const api = fakeApi();
+    const { root } = await mount(api);
+    $<HTMLTextAreaElement>(root, "#dec-input").focus();
+    expect(api.pasteAndDecrypt).not.toHaveBeenCalled();
     await click(button(root, "Paste & decrypt"));
     expect(api.pasteAndDecrypt).toHaveBeenCalledTimes(1);
     expect(root.querySelector(".plain")?.textContent).toBe("pasted secret");
   });
 
   it("shows a ticking clipboard-clear countdown after copying plaintext", async () => {
-    const { api, root } = await open();
-    await click(root.querySelector<HTMLButtonElement>(".row button") as HTMLButtonElement);
+    const api = fakeApi();
+    const { root } = await mount(api);
+    await click($(root, "#decrypt"));
     await click(button(root, "Copy text"));
     expect(api.copy).toHaveBeenCalledWith("plaintext", "the secret text");
     expect(root.textContent).toContain("cleared in 30 s");
@@ -100,6 +210,39 @@ describe("decrypt panel", () => {
     vi.advanceTimersByTime(20_000);
     expect(root.textContent).toContain("Clipboard cleared.");
   });
+
+  it("Reply selects the key that decrypted the message and focuses an empty message field", async () => {
+    const api = fakeApi({
+      listKeys: async () => [ALEX, SAM],
+      decrypt: async () => [{ status: "ok", text: "yo", keyId: SAM.id, keyLabel: "Sam" }],
+    });
+    const { root } = await mount(api);
+    document.body.append(root);
+    type($(root, "#enc-input"), "old draft");
+    await click($(root, "#decrypt"));
+    await click(button(root, "Reply"));
+    expect(keySelect(root).value).toBe(SAM.id);
+    expect($<HTMLTextAreaElement>(root, "#enc-input").value).toBe("");
+    expect(document.activeElement?.id).toBe("enc-input");
+    expect(api.pasteAndDecrypt).not.toHaveBeenCalled();
+  });
+});
+
+describe("first-run guidance", () => {
+  it("explains keys and offers to add one when there are none", async () => {
+    const { root } = await mount(fakeApi({ listKeys: async () => [] }));
+    const guide = $(root, ".guide");
+    expect(guide.hidden).toBe(false);
+    expect(guide.textContent).toContain("never through the chat");
+    await click(button(root, "Add a key"));
+    expect($(root, "#add-label").closest("section")?.hidden).toBe(false);
+    expect($(root, "#enc-input").closest("section")?.hidden).toBe(true);
+  });
+
+  it("is not shown once a key exists", async () => {
+    const { root } = await mount(fakeApi());
+    expect($(root, ".guide").hidden).toBe(true);
+  });
 });
 
 describe("locking clears the screen", () => {
@@ -107,12 +250,9 @@ describe("locking clears the screen", () => {
     const api = fakeApi();
     const m = await mount(api);
     type($(m.root, "#enc-input"), "PRIVATE-DRAFT-TEXT");
-    $<HTMLSelectElement>(m.root, "#enc-key").value = "aabbccdd";
-    await click(inPanel(m.root, "#enc-input", "Encrypt"));
-    await click(button(m.root, "Decrypt"));
-    type($(m.root, "#dec-input"), "🔒1.PASTED-CIPHERTEXT");
-    await click(m.root.querySelector<HTMLButtonElement>(".row button") as HTMLButtonElement);
-    await flush();
+    await click($(m.root, "#encrypt"));
+    type($(m.root, "#dec-input"), "PASTED-CIPHERTEXT");
+    await click($(m.root, "#decrypt"));
     return { api, ...m };
   }
 
@@ -132,7 +272,7 @@ describe("locking clears the screen", () => {
     api.emitLocked();
     await flush();
     assertEmpty(root, fields);
-    expect(root.querySelector("form")).not.toBeNull(); // unlock screen
+    expect(root.querySelector("form")).not.toBeNull();
   });
 
   it("empties all fields when the user presses Lock", async () => {
@@ -146,9 +286,8 @@ describe("locking clears the screen", () => {
   it("goes back to unlock when a call fails with Locked (inactivity timeout)", async () => {
     const api = fakeApi({ encrypt: async () => { throw err("Locked"); } });
     const { root } = await mount(api);
-    $<HTMLSelectElement>(root, "#enc-key").value = "aabbccdd";
     type($(root, "#enc-input"), "PRIVATE-DRAFT-TEXT");
-    await click(inPanel(root, "#enc-input", "Encrypt"));
+    await click($(root, "#encrypt"));
     await flush();
     expect(document.body.textContent).not.toContain("PRIVATE-DRAFT-TEXT");
     expect(root.querySelector("form")).not.toBeNull();

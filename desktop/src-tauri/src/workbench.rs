@@ -1,5 +1,5 @@
 //! The paste-in/copy-out workflow (`message-workbench` spec): encrypt text with a chosen
-//! key, and decrypt every `🔒<version>.…` message found in pasted text. Nothing here
+//! key, and decrypt every message found in pasted text. Nothing here
 //! touches disk, logs or the network.
 
 use cipherchat_core::{self as core_api, ChatKey, Error as CoreError, KEY_LEN};
@@ -55,35 +55,8 @@ pub fn encrypt(vault: &Vault, key_id: Option<&str>, text: &str) -> Result<String
     })
 }
 
-/// A message candidate found in pasted text: the whole `🔒<digits>.<base64url>` run.
-fn find_messages(text: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while let Some(i) = rest.find('🔒') {
-        let after = &rest[i + '🔒'.len_utf8()..];
-        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
-        if digits == 0 || after.as_bytes().get(digits) != Some(&b'.') {
-            rest = after;
-            continue;
-        }
-        let body = &after[digits + 1..];
-        let body_len = body
-            .bytes()
-            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_')
-            .count();
-        let end = i + '🔒'.len_utf8() + digits + 1 + body_len;
-        out.push(&rest[i..end]);
-        rest = &rest[end..];
-    }
-    out
-}
-
 fn decrypt_one(vault: &Vault, message: &str) -> DecryptItem {
     let fail = |error| DecryptItem::Error { error };
-    // Only `🔒1.` exists today; any other number is a newer format.
-    if !message.starts_with(core_api::PREFIX) {
-        return fail(ErrorCode::UnknownVersion);
-    }
     let id = match core_api::key_id_of(message) {
         Ok(id) => hex::encode(&id),
         Err(CoreError::UnknownVersion) => return fail(ErrorCode::UnknownVersion),
@@ -124,7 +97,7 @@ pub fn decrypt(vault: &Vault, pasted: &str) -> Result<Vec<DecryptItem>, AppError
     if pasted.len() > MAX_INPUT_BYTES {
         return Err(ErrorCode::InvalidInput.into());
     }
-    let messages = find_messages(pasted);
+    let messages = core_api::find_messages(pasted);
     if messages.is_empty() {
         return Err(ErrorCode::NotOurFormat.into());
     }
@@ -172,7 +145,7 @@ mod tests {
         let (r, id) = with_key("alice");
         for msg in ["hello", "héllo 🔒🎉", "line one\nline two"] {
             let wire = encrypt(&r.vault, Some(&id), msg).unwrap();
-            assert!(wire.starts_with("🔒1."));
+            assert!(!wire.contains('🔒'));
             let items = decrypt(&r.vault, &wire).unwrap();
             assert_eq!(
                 items,
@@ -258,31 +231,18 @@ mod tests {
     fn one_bad_message_does_not_hide_the_good_ones() {
         let (r, id) = with_key("k");
         let good = encrypt(&r.vault, Some(&id), "fine").unwrap();
-        let items = decrypt(&r.vault, &format!("{good}\n🔒1.AAAA\n{good}")).unwrap();
+        // A well-formed message for a key that is not stored.
+        let other = core_api::encrypt(&ChatKey::from_bytes([9u8; 32]), "x").unwrap();
+        let items = decrypt(&r.vault, &format!("{good}\n{other}\n{good}")).unwrap();
         assert_eq!(items.len(), 3);
         assert!(matches!(items[0], DecryptItem::Ok { .. }));
         assert_eq!(
             items[1],
             DecryptItem::Error {
-                error: ErrorCode::NotOurFormat
+                error: ErrorCode::UnknownKey
             }
         );
         assert!(matches!(items[2], DecryptItem::Ok { .. }));
-    }
-
-    #[test]
-    fn find_messages_cases() {
-        assert_eq!(
-            find_messages("a 🔒1.abc-_9 b 🔒1.def"),
-            ["🔒1.abc-_9", "🔒1.def"]
-        );
-        assert_eq!(find_messages("🔒1.abc🔒1.def"), ["🔒1.abc", "🔒1.def"]);
-        assert_eq!(find_messages("🔒 hello 🔒12 🔒x.abc"), Vec::<&str>::new());
-        assert_eq!(find_messages("🔒2.abc"), ["🔒2.abc"]);
-        assert_eq!(find_messages("🔒1."), ["🔒1."]);
-        assert_eq!(find_messages(""), Vec::<&str>::new());
-        assert_eq!(find_messages("🔒"), Vec::<&str>::new());
-        assert_eq!(find_messages("🔒🔒1.a"), ["🔒1.a"]);
     }
 
     // ---- decrypt: one test per failure reason ----
@@ -290,17 +250,37 @@ mod tests {
     #[test]
     fn reason_not_ours() {
         let (r, _) = with_key("k");
-        for pasted in ["hello", "🔒 hello", "", "   "] {
+        for pasted in ["hello", "🔒 hello", "", "   ", "a long ordinary sentence with many words in it"] {
             assert_eq!(
                 err(decrypt(&r.vault, pasted)),
                 ErrorCode::NotOurFormat,
                 "{pasted:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_former_prefixed_form_is_not_recognised() {
+        let (r, id) = with_key("k");
+        let wire = encrypt(&r.vault, Some(&id), "x").unwrap();
         assert_eq!(
-            decrypt(&r.vault, "🔒1.!!!").unwrap(),
+            err(decrypt(&r.vault, &format!("🔒1.{wire}"))),
+            ErrorCode::NotOurFormat
+        );
+    }
+
+    #[test]
+    fn altered_message_is_reported_as_tampered() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let (r, id) = with_key("k");
+        let wire = encrypt(&r.vault, Some(&id), "x").unwrap();
+        let mut bytes = URL_SAFE_NO_PAD.decode(&wire).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        assert_eq!(
+            decrypt(&r.vault, &URL_SAFE_NO_PAD.encode(bytes)).unwrap(),
             [DecryptItem::Error {
-                error: ErrorCode::NotOurFormat
+                error: ErrorCode::Tampered
             }]
         );
     }
@@ -339,21 +319,14 @@ mod tests {
     #[test]
     fn reason_unknown_version() {
         let (r, id) = with_key("k");
-        // A future prefix number...
-        assert_eq!(
-            decrypt(&r.vault, "🔒2.AAAAAAAAAAAAAAAA").unwrap(),
-            [DecryptItem::Error {
-                error: ErrorCode::UnknownVersion
-            }]
-        );
-        // ...and a `🔒1.` message whose inner version byte is newer.
+        // A message whose header version byte is newer.
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
         let wire = encrypt(&r.vault, Some(&id), "x").unwrap();
         let mut bytes = URL_SAFE_NO_PAD
-            .decode(wire.strip_prefix("🔒1.").unwrap())
+            .decode(&wire)
             .unwrap();
         bytes[0] = 2;
-        let newer = format!("🔒1.{}", URL_SAFE_NO_PAD.encode(bytes));
+        let newer = URL_SAFE_NO_PAD.encode(bytes);
         assert_eq!(
             decrypt(&r.vault, &newer).unwrap(),
             [DecryptItem::Error {
@@ -393,7 +366,7 @@ mod tests {
             },
         )
         .unwrap();
-        let wire = "🔒1.ATp3iqIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiLrAotgM5mn_ZUlcbn-EcCWEmdcQIevSiMFasrDKDlI1-1jzN69";
+        let wire = "ATp3iqIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiLrAotgM5mn_ZUlcbn-EcCWEmdcQIevSiMFasrDKDlI1-1jzN69";
         assert_eq!(
             ok_texts(&decrypt(&r.vault, wire).unwrap()),
             ["hello CipherChat 🔒"]
@@ -420,7 +393,7 @@ mod tests {
         let wire = encrypt(&vault, Some(&id), plain).unwrap();
         let shown = decrypt(&vault, &wire).unwrap();
         assert_eq!(ok_texts(&shown), [plain]);
-        let body = wire.strip_prefix("🔒1.").unwrap().to_string();
+        let body = wire.clone();
 
         let mut scanned = 0;
         for entry in std::fs::read_dir(dir.path()).unwrap() {

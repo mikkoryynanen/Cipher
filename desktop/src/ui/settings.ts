@@ -1,23 +1,25 @@
-import { h } from "./dom";
+import { h, info, problem, statusLine } from "./dom";
 import { describe } from "./messages";
 import type { Ctx, Panel } from "./types";
 
-/** Clipboard clearing. Exported keys are always cleared, so there is no switch for them. */
+/** Copy and clipboard preferences. Exported keys are always cleared, so there is no switch for them. */
 export function settingsPanel(ctx: Ctx): Panel {
   const timeout = h("input", { type: "number", id: "set-timeout", min: "5", max: "600", "aria-label": "Clear after (seconds)" });
+  const auto = h("input", { type: "checkbox", id: "set-autocopy" });
   const plain = h("input", { type: "checkbox", id: "set-plain" });
   const cipher = h("input", { type: "checkbox", id: "set-cipher" });
-  const msg = h("p", { className: "msg", role: "alert" });
+  const msg = statusLine();
   const save = h("button", { type: "button" }, "Save");
 
   async function refresh(): Promise<void> {
     try {
       const s = await ctx.api.getClipboardSettings();
       timeout.value = String(s.timeoutSecs);
+      auto.checked = s.autoCopyCiphertext;
       plain.checked = s.clearPlaintext;
       cipher.checked = s.clearCiphertext;
     } catch (e) {
-      msg.textContent = describe(ctx.fail(e));
+      problem(msg, describe(ctx.fail(e)));
     }
   }
 
@@ -27,18 +29,21 @@ export function settingsPanel(ctx: Ctx): Panel {
         timeoutSecs: Number(timeout.value),
         clearPlaintext: plain.checked,
         clearCiphertext: cipher.checked,
+        autoCopyCiphertext: auto.checked,
       });
-      msg.textContent = "Saved.";
+      info(msg, "Saved.");
     } catch (e) {
-      msg.textContent = describe(ctx.fail(e));
+      problem(msg, describe(ctx.fail(e)));
     }
   });
 
   const el = h(
     "section",
     { className: "panel" },
-    h("h2", {}, "Clipboard"),
+    h("h2", {}, "Settings"),
     h("p", { className: "lead" }, "Copied keys and decrypted text are removed from the clipboard after a delay, unless you copied something else in the meantime."),
+    h("label", { className: "check" }, auto, " Copy encrypted message automatically after encrypting"),
+    h("h3", {}, "Clipboard clearing"),
     h("label", { for: "set-timeout" }, "Clear after (seconds)"),
     timeout,
     h("label", { className: "check" }, plain, " Also clear decrypted text"),

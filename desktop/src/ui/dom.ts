@@ -27,3 +27,20 @@ export function wipeFields(root: ParentNode): void {
     (f as HTMLInputElement | HTMLTextAreaElement).value = "";
   }
 }
+
+/** Outcome line under a primary action. One element per action, shared by success and failure. */
+export function statusLine(): HTMLParagraphElement {
+  return h("p", { className: "status", role: "status" });
+}
+
+/** Show a failure in `el`. */
+export function problem(el: HTMLElement, text: string): void {
+  el.className = "status error";
+  el.textContent = text;
+}
+
+/** Show a neutral or successful outcome in `el`. */
+export function info(el: HTMLElement, text: string): void {
+  el.className = "status";
+  el.textContent = text;
+}

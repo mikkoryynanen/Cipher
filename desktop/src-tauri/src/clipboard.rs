@@ -37,7 +37,7 @@ pub enum CopyKind {
     Key,
     /// Decrypted message text.
     Plaintext,
-    /// An encrypted `🔒1.` message, meant to be pasted into a messenger.
+    /// An encrypted message, meant to be pasted into a messenger.
     Ciphertext,
 }
 
@@ -49,6 +49,14 @@ pub struct ClipboardSettings {
     pub timeout_secs: u64,
     pub clear_plaintext: bool,
     pub clear_ciphertext: bool,
+    /// Copy a newly encrypted message to the clipboard straight away. Absent in files
+    /// saved before this setting existed, which then get the default.
+    #[serde(default = "default_auto_copy")]
+    pub auto_copy_ciphertext: bool,
+}
+
+fn default_auto_copy() -> bool {
+    true
 }
 
 impl Default for ClipboardSettings {
@@ -57,6 +65,7 @@ impl Default for ClipboardSettings {
             timeout_secs: DEFAULT_TIMEOUT_SECS,
             clear_plaintext: true,
             clear_ciphertext: false,
+            auto_copy_ciphertext: true,
         }
     }
 }
@@ -360,12 +369,12 @@ mod tests {
     #[test]
     fn ciphertext_is_not_cleared_by_default() {
         let r = rig();
-        let out = r.guard.copy(CopyKind::Ciphertext, "🔒1.abc").unwrap();
+        let out = r.guard.copy(CopyKind::Ciphertext, "abc").unwrap();
         assert_eq!(out.clears_in_secs, None);
         assert!(!r.guard.has_pending());
         r.clock.advance(10_000);
         r.guard.tick();
-        assert_eq!(r.cb.get().as_deref(), Some("🔒1.abc"));
+        assert_eq!(r.cb.get().as_deref(), Some("abc"));
         assert_eq!(
             r.cb.read_count(),
             0,
@@ -384,7 +393,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             r.guard
-                .copy(CopyKind::Ciphertext, "🔒1.abc")
+                .copy(CopyKind::Ciphertext, "abc")
                 .unwrap()
                 .clears_in_secs,
             Some(30)
@@ -434,10 +443,10 @@ mod tests {
         // The clipboard now holds ciphertext, which must not be wiped by the key's timer.
         let r = rig();
         r.guard.copy(CopyKind::Key, "ck1-abc").unwrap();
-        r.guard.copy(CopyKind::Ciphertext, "🔒1.abc").unwrap();
+        r.guard.copy(CopyKind::Ciphertext, "abc").unwrap();
         r.clock.advance(60);
         r.guard.tick();
-        assert_eq!(r.cb.get().as_deref(), Some("🔒1.abc"));
+        assert_eq!(r.cb.get().as_deref(), Some("abc"));
     }
 
     #[test]
@@ -564,6 +573,7 @@ mod tests {
             timeout_secs: 90,
             clear_plaintext: false,
             clear_ciphertext: true,
+            auto_copy_ciphertext: false,
         };
         r.guard.set_settings(s).unwrap();
         let again = rig_with(r.store.clone(), r.clock.clone());
@@ -584,6 +594,26 @@ mod tests {
                 ClipboardSettings::default()
             );
         }
+    }
+
+    #[test]
+    fn auto_copy_defaults_on_and_old_settings_files_keep_their_values() {
+        assert!(ClipboardSettings::default().auto_copy_ciphertext);
+        let r = rig();
+        let store = MemStorage::default();
+        store.files.lock().unwrap().insert(
+            SETTINGS_FILE.into(),
+            br#"{"timeoutSecs":90,"clearPlaintext":false,"clearCiphertext":true}"#.to_vec(),
+        );
+        assert_eq!(
+            rig_with(store, r.clock.clone()).guard.settings(),
+            ClipboardSettings {
+                timeout_secs: 90,
+                clear_plaintext: false,
+                clear_ciphertext: true,
+                auto_copy_ciphertext: true,
+            }
+        );
     }
 
     #[test]
@@ -637,10 +667,10 @@ mod tests {
     #[test]
     fn explicit_paste_is_the_only_other_read() {
         let r = rig();
-        r.cb.external_copy("🔒1.pasted");
+        r.cb.external_copy("pasted");
         assert_eq!(
             r.guard.paste().unwrap().as_deref().map(String::as_str),
-            Some("🔒1.pasted")
+            Some("pasted")
         );
         assert_eq!(r.cb.read_count(), 1);
     }

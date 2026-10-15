@@ -5,12 +5,12 @@ here, copy the encrypted text, and paste it into any messenger. When you receive
 encrypted message, you paste it here to read it. The app never touches the messenger,
 and it makes no network connections.
 
-The messenger only ever carries text that looks like `🔒1.ATp3iq…`. The key stays on your
+The messenger only ever carries a block of random-looking text such as `ATp3iq…` (copy it as one piece, without line breaks). The key stays on your
 computer, in a vault protected by a passphrase.
 
 ## Using it
 
-1. **Create a vault.** Choose a passphrase of at least 12 characters. It protects your
+1. **Create a vault.** Choose a passphrase of at least 12 characters (debug builds accept any non-empty one). It protects your
    keys on this computer. If you forget it, the keys cannot be recovered.
 2. **Get a key.** Everyone in a conversation needs the same key. In **Keys** you can:
    - generate a random key and send it to your contact **out of band** (in person, by
@@ -18,14 +18,19 @@ computer, in a vault protected by a passphrase.
    - or derive one from a shared passphrase plus a salt (also shared out of band).
      Random keys are safer, because a passphrase can be guessed offline from captured
      messages.
-3. **Encrypt.** Pick the key, type the message, press **Encrypt**, then **Copy encrypted
-   message** and paste it into the messenger.
-4. **Decrypt.** Copy the received message in the messenger, then press **Paste & decrypt**
-   (or paste into the box and press **Decrypt**). The app finds the right key by the key
-   ID stored in the message.
+3. **Write.** On the **Messages** page pick the key (it is preselected when there is only
+   one, or when you used it last), type the message and press **Encrypt** (or Ctrl/Cmd+Enter).
+   The encrypted text is copied to the clipboard automatically; paste it into the messenger.
+   Turn this off under **Settings** to copy by hand with **Copy encrypted message**.
+4. **Read.** Copy the received message in the messenger, then press **Paste & decrypt** (or
+   paste into the box and press **Decrypt**, or Ctrl/Cmd+Enter). The app finds the right key
+   by the key ID stored in the message. **Reply** selects that key for your answer.
+
+Shortcuts: Ctrl/Cmd+1, 2, 3 switch between Messages, Keys and Settings. The tabs also work
+with the arrow keys.
 
 Copied keys and decrypted text are removed from the clipboard after 30 seconds (change
-this under **Clipboard**), but only if the clipboard still contains what the app put
+this under **Settings**), but only if the clipboard still contains what the app put
 there. The vault locks after 10 minutes without activity, and locking clears every field.
 
 ## Build and test
@@ -37,12 +42,14 @@ cd desktop
 npm install
 npm test                          # UI tests
 cargo test -p desktop             # backend tests (run from the repository root)
-npm run tauri -- build --no-bundle  # release binary: ../target/release/desktop
-../target/release/desktop           # start it
+npm run tauri -- build --debug --no-bundle  # debug binary: ../target/debug/desktop
+../target/debug/desktop                     # start it
 ```
 
 `npm run tauri -- build` also builds the frontend, and sets the Tauri feature that embeds
-it in the binary. A plain `cargo build --release` does not embed the frontend.
+it in the binary. A plain `cargo build` does not embed the frontend. Use `--debug` for
+normal development. Release builds (without `--debug`) enforce the 12-character minimum
+for the vault passphrase; debug builds only require a non-empty one.
 
 ## What is and is not protected
 
@@ -86,14 +93,14 @@ In the app data folder (`app.cipherchat.desktop`), for example
 |------|----------|
 | `vault.json` | Encrypted keys, key-derivation settings and salt |
 | `throttle.json` | Failed unlock count and the time of the next allowed attempt |
-| `clipboard-settings.json` | Clipboard clearing preferences |
+| `clipboard-settings.json` | Copy and clipboard clearing preferences |
 
 Files are readable only by your user account on macOS and Linux.
 
 ## Design notes
 
-- `core/` (Rust) does all cryptography: XChaCha20-Poly1305 and Argon2id. The wire format
-  is the same as the old browser extension, so earlier messages still decrypt.
+- `core/` (Rust) does all cryptography: XChaCha20-Poly1305 and Argon2id. Messages are
+  plain base64url text with no prefix. The old `🔒1.` form is no longer recognised.
 - `desktop/src-tauri/` is the backend that owns the vault, keys and clipboard. The window
   can only call the commands listed in `src-tauri/commands.txt`, and
   `src-tauri/tests/capabilities.rs` fails if anything else is allowed, if a network

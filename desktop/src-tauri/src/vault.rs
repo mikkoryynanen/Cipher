@@ -17,6 +17,17 @@ use crate::hex;
 use crate::storage::Storage;
 
 pub const MIN_PASSPHRASE_CHARS: usize = 12;
+/// Debug builds only need a non-empty passphrase, to make development faster. Release
+/// builds enforce `MIN_PASSPHRASE_CHARS`.
+pub const DEBUG_MIN_PASSPHRASE_CHARS: usize = 1;
+
+fn app_min_passphrase() -> usize {
+    if cfg!(debug_assertions) {
+        DEBUG_MIN_PASSPHRASE_CHARS
+    } else {
+        MIN_PASSPHRASE_CHARS
+    }
+}
 pub const DEFAULT_AUTO_LOCK_SECS: u64 = 10 * 60;
 
 const VAULT_FILE: &str = "vault.json";
@@ -100,6 +111,8 @@ struct Unlocked {
 pub struct VaultStatus {
     pub unlocked: bool,
     pub has_vault: bool,
+    /// Shortest passphrase the backend accepts when creating a vault.
+    pub min_passphrase: usize,
 }
 
 pub struct Vault {
@@ -107,6 +120,7 @@ pub struct Vault {
     clock: Arc<dyn Clock>,
     kdf: KdfParams,
     auto_lock_secs: u64,
+    min_passphrase: usize,
     /// Serializes create/unlock so throttling cannot be raced by parallel attempts.
     gate: Mutex<()>,
     /// Guards the unlocked state; held across every modification and its save.
@@ -119,7 +133,9 @@ fn internal<E>(_: E) -> AppError {
 
 impl Vault {
     pub fn new(storage: Box<dyn Storage>, clock: Arc<dyn Clock>) -> Self {
-        Self::with_options(storage, clock, DEFAULT_KDF, DEFAULT_AUTO_LOCK_SECS)
+        let mut vault = Self::with_options(storage, clock, DEFAULT_KDF, DEFAULT_AUTO_LOCK_SECS);
+        vault.min_passphrase = app_min_passphrase();
+        vault
     }
 
     pub fn with_options(
@@ -133,6 +149,7 @@ impl Vault {
             clock,
             kdf,
             auto_lock_secs,
+            min_passphrase: MIN_PASSPHRASE_CHARS,
             gate: Mutex::new(()),
             inner: Mutex::new(None),
         }
@@ -160,13 +177,14 @@ impl Vault {
         Ok(VaultStatus {
             unlocked: g.is_some(),
             has_vault: self.read_file()?.is_some(),
+            min_passphrase: self.min_passphrase,
         })
     }
 
     /// Create the vault on first use and leave it unlocked.
     pub fn create(&self, passphrase: &str) -> Result<(), AppError> {
         let _gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
-        if passphrase.chars().count() < MIN_PASSPHRASE_CHARS {
+        if passphrase.chars().count() < self.min_passphrase {
             return Err(ErrorCode::InvalidInput.into());
         }
         if self.read_file()?.is_some() {
@@ -414,7 +432,8 @@ pub mod tests {
             r.vault.status().unwrap(),
             VaultStatus {
                 unlocked: false,
-                has_vault: false
+                has_vault: false,
+                min_passphrase: MIN_PASSPHRASE_CHARS,
             }
         );
         r.vault.create(PASS).unwrap();
@@ -422,7 +441,8 @@ pub mod tests {
             r.vault.status().unwrap(),
             VaultStatus {
                 unlocked: true,
-                has_vault: true
+                has_vault: true,
+                min_passphrase: MIN_PASSPHRASE_CHARS,
             }
         );
         r.vault.lock();
@@ -430,7 +450,8 @@ pub mod tests {
             r.vault.status().unwrap(),
             VaultStatus {
                 unlocked: false,
-                has_vault: true
+                has_vault: true,
+                min_passphrase: MIN_PASSPHRASE_CHARS,
             }
         );
     }
@@ -474,8 +495,11 @@ pub mod tests {
         assert!(!text.contains(&key_hex), "key hex found in vault file");
         assert!(!text.contains("key7"), "label found in vault file");
         assert!(!text.contains(PASS));
-        assert!(
-            text.contains("🔒1."),
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let blob = json["blob"].as_str().unwrap();
+        assert_eq!(
+            cipherchat_core::find_messages(blob),
+            [blob],
             "blob should be a sealed CipherChat message"
         );
     }
@@ -512,6 +536,21 @@ pub mod tests {
         assert!(!r.vault.status().unwrap().has_vault);
         // Exactly 12 characters is accepted, counted as characters not bytes.
         r.vault.create("twelve chars").unwrap();
+    }
+
+    #[test]
+    fn app_vaults_need_the_full_length_only_in_release_builds() {
+        let vault = Vault::new(
+            Box::new(MemStorage::default()),
+            Arc::new(crate::clock::SystemClock),
+        );
+        let min = vault.status().unwrap().min_passphrase;
+        if cfg!(debug_assertions) {
+            assert_eq!(min, DEBUG_MIN_PASSPHRASE_CHARS);
+            assert_eq!(vault.create(""), Err(ErrorCode::InvalidInput.into()));
+        } else {
+            assert_eq!(min, MIN_PASSPHRASE_CHARS);
+        }
     }
 
     #[test]

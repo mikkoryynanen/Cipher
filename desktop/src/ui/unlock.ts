@@ -1,18 +1,16 @@
-import { MIN_PASSPHRASE, PASSPHRASE_HINT, describe } from "./messages";
-import { h } from "./dom";
+import { describe, passphraseHint } from "./messages";
+import { h, info, problem, statusLine } from "./dom";
 import type { Ctx } from "./types";
 
 /** Unlock an existing vault, or create one on first use. */
-export function unlockScreen(ctx: Ctx, hasVault: boolean, onDone: () => void): HTMLElement {
+export function unlockScreen(ctx: Ctx, hasVault: boolean, onDone: () => void, lockReason?: "inactivity", minPassphrase = 12): HTMLElement {
   const pass = h("input", { type: "password", id: "pass", autocomplete: "off", "aria-label": "Passphrase" });
   const confirm = h("input", { type: "password", id: "confirm", autocomplete: "off", "aria-label": "Repeat passphrase" });
-  const msg = h("p", { className: "msg", role: "alert" });
+  const msg = statusLine();
   const go = h("button", { type: "submit" }, hasVault ? "Unlock" : "Create vault");
   let waitTimer: number | undefined;
 
-  const say = (text: string) => {
-    msg.textContent = text;
-  };
+  const say = (text: string) => problem(msg, text);
 
   /** Disable the button and count down a throttling wait. */
   const wait = (secs: number) => {
@@ -27,7 +25,7 @@ export function unlockScreen(ctx: Ctx, hasVault: boolean, onDone: () => void): H
         ctx.clear(waitTimer as number);
         waitTimer = undefined;
         go.disabled = false;
-        say("You can try again now.");
+        info(msg, "You can try again now.");
       } else paint();
     }, 1000);
   };
@@ -36,12 +34,15 @@ export function unlockScreen(ctx: Ctx, hasVault: boolean, onDone: () => void): H
     "form",
     { className: "card", autocomplete: "off" },
     h("h1", {}, "CipherChat"),
+    lockReason === "inactivity" && hasVault
+      ? h("p", { className: "warning", role: "status" }, "CipherChat locked after a period of inactivity. Text you had not copied was cleared.")
+      : null,
     h("p", { className: "lead" }, hasVault ? "Enter your passphrase to unlock your keys." : "Create a passphrase to protect your keys on this computer."),
     h("label", { for: "pass" }, hasVault ? "Passphrase" : "New passphrase"),
     pass,
     hasVault ? null : h("label", { for: "confirm" }, "Repeat passphrase"),
     hasVault ? null : confirm,
-    hasVault ? null : h("p", { className: "hint" }, PASSPHRASE_HINT),
+    hasVault ? null : h("p", { className: "hint" }, passphraseHint(minPassphrase)),
     go,
     msg,
   );
@@ -61,7 +62,7 @@ export function unlockScreen(ctx: Ctx, hasVault: boolean, onDone: () => void): H
       go.disabled = false;
       pass.value = "";
       if (err.code === "Throttled") wait(err.waitSecs ?? 5);
-      else if (err.code === "InvalidInput" && !hasVault) say(`The passphrase must be at least ${MIN_PASSPHRASE} characters.`);
+      else if (err.code === "InvalidInput" && !hasVault) say(minPassphrase > 1 ? `The passphrase must be at least ${minPassphrase} characters.` : "Enter a passphrase.");
       else say(describe(err));
     }
   });

@@ -12,7 +12,7 @@ async function submit(root: HTMLElement) {
 describe("create vault", () => {
   it("shows the length rule and reports a short passphrase from the backend", async () => {
     const api = fakeApi({
-      status: async () => ({ unlocked: false, hasVault: false }),
+      status: async () => ({ unlocked: false, hasVault: false, minPassphrase: 12 }),
       createVault: async () => {
         throw err("InvalidInput");
       },
@@ -23,22 +23,30 @@ describe("create vault", () => {
     type($(root, "#confirm"), "short");
     await submit(root);
     expect(api.createVault).toHaveBeenCalledWith("short");
-    expect($(root, ".msg").textContent).toBe("The passphrase must be at least 12 characters.");
+    expect($(root, ".status").textContent).toBe("The passphrase must be at least 12 characters.");
     expect(root.querySelector("#lock")).toBeNull();
   });
 
+  it("shows no length rule when the backend reports a minimum of one (debug builds)", async () => {
+    const api = fakeApi({ status: async () => ({ unlocked: false, hasVault: false, minPassphrase: 1 }), createVault: async () => { throw err("InvalidInput"); } });
+    const { root } = await mount(api);
+    expect(root.textContent).not.toContain("at least");
+    await submit(root);
+    expect($(root, ".status").textContent).toBe("Enter a passphrase.");
+  });
+
   it("does not call the backend when the two passphrases differ", async () => {
-    const api = fakeApi({ status: async () => ({ unlocked: false, hasVault: false }) });
+    const api = fakeApi({ status: async () => ({ unlocked: false, hasVault: false, minPassphrase: 12 }) });
     const { root } = await mount(api);
     type($(root, "#pass"), "a long passphrase one");
     type($(root, "#confirm"), "a long passphrase two");
     await submit(root);
     expect(api.createVault).not.toHaveBeenCalled();
-    expect($(root, ".msg").textContent).toContain("do not match");
+    expect($(root, ".status").textContent).toContain("do not match");
   });
 
   it("opens the app and forgets the passphrase after a successful create", async () => {
-    const api = fakeApi({ status: async () => ({ unlocked: false, hasVault: false }) });
+    const api = fakeApi({ status: async () => ({ unlocked: false, hasVault: false, minPassphrase: 12 }) });
     const { root } = await mount(api);
     const pass = $<HTMLInputElement>(root, "#pass");
     type(pass, "a long passphrase here");
@@ -51,14 +59,14 @@ describe("create vault", () => {
 });
 
 describe("unlock", () => {
-  const locked = { status: async () => ({ unlocked: false, hasVault: true }) };
+  const locked = { status: async () => ({ unlocked: false, hasVault: true, minPassphrase: 12 }) };
 
   it("reports a wrong passphrase and stays locked", async () => {
     const api = fakeApi({ ...locked, unlock: async () => { throw err("WrongPassphrase"); } });
     const { root } = await mount(api);
     type($(root, "#pass"), "nope");
     await submit(root);
-    expect($(root, ".msg").textContent).toBe("Wrong passphrase.");
+    expect($(root, ".status").textContent).toBe("Wrong passphrase.");
     expect($<HTMLInputElement>(root, "#pass").value).toBe("");
     expect(root.querySelector("#lock")).toBeNull();
   });
@@ -70,12 +78,12 @@ describe("unlock", () => {
     await submit(root);
     const go = button(root, "Unlock");
     expect(go.disabled).toBe(true);
-    expect($(root, ".msg").textContent).toBe("Too many attempts. Try again in 5 s.");
+    expect($(root, ".status").textContent).toBe("Too many attempts. Try again in 5 s.");
     vi.advanceTimersByTime(2000);
-    expect($(root, ".msg").textContent).toBe("Too many attempts. Try again in 3 s.");
+    expect($(root, ".status").textContent).toBe("Too many attempts. Try again in 3 s.");
     vi.advanceTimersByTime(3000);
     expect(go.disabled).toBe(false);
-    expect($(root, ".msg").textContent).toBe("You can try again now.");
+    expect($(root, ".status").textContent).toBe("You can try again now.");
   });
 
   it("does not submit while a wait is running", async () => {

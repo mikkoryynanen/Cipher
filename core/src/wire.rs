@@ -7,16 +7,13 @@ use rand_core::{OsRng, RngCore};
 
 use crate::{ChatKey, Error, KEY_ID_LEN};
 
-/// Marker that starts every encrypted message (format version 1).
-pub const PREFIX: &str = "🔒1.";
-
 const VERSION: u8 = 1;
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
 const HEADER_LEN: usize = 1 + KEY_ID_LEN;
 const MIN_LEN: usize = HEADER_LEN + NONCE_LEN + TAG_LEN;
 
-/// Encrypt `plaintext` into a `🔒1.<base64url>` string.
+/// Encrypt `plaintext` into a base64url string (no prefix or other marker).
 pub fn encrypt(key: &ChatKey, plaintext: &str) -> Result<String, Error> {
     let mut nonce = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce);
@@ -44,21 +41,29 @@ pub(crate) fn encrypt_with_nonce(
     out.extend_from_slice(&header);
     out.extend_from_slice(nonce);
     out.extend_from_slice(&ct);
-    Ok(format!("{PREFIX}{}", URL_SAFE_NO_PAD.encode(out)))
-}
-
-/// Cheap prefix check for encrypted text.
-pub fn is_encrypted(text: &str) -> bool {
-    text.starts_with(PREFIX)
+    Ok(URL_SAFE_NO_PAD.encode(out))
 }
 
 fn parse(text: &str) -> Result<Vec<u8>, Error> {
-    let body = text.trim().strip_prefix(PREFIX).ok_or(Error::NotOurFormat)?;
-    let bytes = URL_SAFE_NO_PAD.decode(body).map_err(|_| Error::NotOurFormat)?;
+    let bytes = URL_SAFE_NO_PAD.decode(text.trim()).map_err(|_| Error::NotOurFormat)?;
     if bytes.len() < MIN_LEN {
         return Err(Error::NotOurFormat);
     }
     Ok(bytes)
+}
+
+fn is_alphabet(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
+/// Find encrypted messages in pasted text, in order. Messages have no marker, so each
+/// whitespace-separated token (minus surrounding punctuation) is kept only if it decodes
+/// to something long enough to hold a header, nonce and tag. Everything else is ignored.
+pub fn find_messages(text: &str) -> Vec<&str> {
+    text.split_whitespace()
+        .map(|t| t.trim_matches(|c: char| !is_alphabet(c)))
+        .filter(|t| parse(t).is_ok())
+        .collect()
 }
 
 /// Read the 4-byte key ID from a message without decrypting it.
@@ -73,7 +78,7 @@ pub fn key_id_of(text: &str) -> Result<[u8; KEY_ID_LEN], Error> {
     Ok(id)
 }
 
-/// Decrypt a `🔒1.` message with `key`.
+/// Decrypt a message with `key`.
 pub fn decrypt(key: &ChatKey, text: &str) -> Result<String, Error> {
     let bytes = parse(text)?;
     if bytes[0] != VERSION {
@@ -101,18 +106,19 @@ mod tests {
     }
 
     fn payload(msg: &str) -> Vec<u8> {
-        URL_SAFE_NO_PAD.decode(encrypt(&key(), msg).unwrap().strip_prefix(PREFIX).unwrap()).unwrap()
+        URL_SAFE_NO_PAD.decode(encrypt(&key(), msg).unwrap()).unwrap()
     }
 
     fn wrap(bytes: &[u8]) -> String {
-        format!("{PREFIX}{}", URL_SAFE_NO_PAD.encode(bytes))
+        URL_SAFE_NO_PAD.encode(bytes)
     }
 
     #[test]
     fn round_trip() {
         for msg in ["hello", "", "héllo 🔒🎉 wörld", "line one\nline two\n\nline four"] {
             let enc = encrypt(&key(), msg).unwrap();
-            assert!(enc.starts_with(PREFIX));
+            assert!(enc.chars().all(is_alphabet), "{enc}");
+            assert!(!enc.contains('🔒'));
             assert_eq!(decrypt(&key(), &enc).unwrap(), msg);
         }
     }
@@ -123,10 +129,39 @@ mod tests {
     }
 
     #[test]
-    fn detection() {
-        assert!(is_encrypted(&encrypt(&key(), "x").unwrap()));
-        assert!(!is_encrypted("hello"));
-        assert!(!is_encrypted("🔒 hello"));
+    fn finds_messages_in_pasted_text() {
+        let a = encrypt(&key(), "a").unwrap();
+        let b = encrypt(&key(), "b").unwrap();
+        assert_eq!(find_messages(&a), [a.as_str()]);
+        assert_eq!(find_messages(&format!("hi\n{a}\nthere")), [a.as_str()]);
+        assert_eq!(find_messages(&format!("{a} {b}\n\n{a}")), [a.as_str(), b.as_str(), a.as_str()]);
+        assert_eq!(find_messages(&format!("see ({a}).")), [a.as_str()]);
+    }
+
+    #[test]
+    fn ignores_text_that_is_not_a_message() {
+        for text in ["", "   ", "hello", "a perfectly ordinary sentence of words", "AAAA", "🔒 hello"] {
+            assert!(find_messages(text).is_empty(), "{text:?}");
+        }
+        // The removed `🔒1.` form is not recognised.
+        let old = format!("🔒1.{}", encrypt(&key(), "x").unwrap());
+        assert!(find_messages(&old).is_empty());
+        assert_eq!(decrypt(&key(), &old), Err(Error::NotOurFormat));
+    }
+
+    #[test]
+    fn altered_and_newer_messages_are_still_found() {
+        let mut bad = payload("secret");
+        let last = bad.len() - 1;
+        bad[last] ^= 1;
+        let wire = wrap(&bad);
+        assert_eq!(find_messages(&wire), [wire.as_str()]);
+        assert_eq!(decrypt(&key(), &wire), Err(Error::Tampered));
+        let mut newer = payload("secret");
+        newer[0] = 2;
+        let wire = wrap(&newer);
+        assert_eq!(find_messages(&wire), [wire.as_str()]);
+        assert_eq!(decrypt(&key(), &wire), Err(Error::UnknownVersion));
     }
 
     #[test]
@@ -181,9 +216,8 @@ mod tests {
     #[test]
     fn malformed_input() {
         assert_eq!(decrypt(&key(), "hello"), Err(Error::NotOurFormat));
-        assert_eq!(decrypt(&key(), "🔒2.AAAA"), Err(Error::NotOurFormat));
-        assert_eq!(decrypt(&key(), "🔒1.!!!not base64!!!"), Err(Error::NotOurFormat));
-        assert_eq!(decrypt(&key(), "🔒1.AAAA"), Err(Error::NotOurFormat));
+        assert_eq!(decrypt(&key(), "!!!not base64!!!"), Err(Error::NotOurFormat));
+        assert_eq!(decrypt(&key(), "AAAA"), Err(Error::NotOurFormat));
         assert_eq!(decrypt(&key(), ""), Err(Error::NotOurFormat));
         assert_eq!(key_id_of("hello"), Err(Error::NotOurFormat));
     }
@@ -191,7 +225,7 @@ mod tests {
     // Fixed vector: key = [0x11; 32], nonce = [0x22; 24], plaintext below.
     // If this fails the wire format changed.
     const VECTOR_PLAINTEXT: &str = "hello CipherChat 🔒";
-    const VECTOR_WIRE: &str = "🔒1.ATp3iqIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiLrAotgM5mn_ZUlcbn-EcCWEmdcQIevSiMFasrDKDlI1-1jzN69";
+    const VECTOR_WIRE: &str = "ATp3iqIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiLrAotgM5mn_ZUlcbn-EcCWEmdcQIevSiMFasrDKDlI1-1jzN69";
 
     #[test]
     fn fixed_vector_encrypts_to_recorded_wire() {

@@ -27,6 +27,8 @@ export interface AppError {
 export interface VaultStatus {
   unlocked: boolean;
   hasVault: boolean;
+  /** Shortest passphrase the backend accepts. Debug builds accept very short ones. */
+  minPassphrase: number;
 }
 
 export interface KeyInfo {
@@ -61,6 +63,8 @@ export interface ClipboardSettings {
   timeoutSecs: number;
   clearPlaintext: boolean;
   clearCiphertext: boolean;
+  /** Copy a newly encrypted message to the clipboard right away. */
+  autoCopyCiphertext: boolean;
 }
 
 export interface Api {

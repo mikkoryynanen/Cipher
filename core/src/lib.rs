@@ -7,12 +7,12 @@ mod key;
 mod wire;
 
 pub use key::{fingerprint_of, ChatKey, KEY_ID_LEN, KEY_LEN, SALT_LEN};
-pub use wire::{decrypt, encrypt, is_encrypted, key_id_of, PREFIX};
+pub use wire::{decrypt, encrypt, find_messages, key_id_of};
 
 /// Errors from encryption, decryption and key derivation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    /// Input is not a CipherChat message (bad prefix, base64, or too short).
+    /// Input is not a CipherChat message (bad base64 or too short).
     NotOurFormat,
     /// Well-formed message with an unsupported version.
     UnknownVersion,
