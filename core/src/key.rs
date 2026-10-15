@@ -38,7 +38,20 @@ impl ChatKey {
 
     /// Derive a key from a passphrase and a salt shared out of band (Argon2id).
     pub fn from_passphrase(passphrase: &str, salt: &[u8; SALT_LEN]) -> Result<Self, Error> {
-        let params = Params::new(ARGON_M_KIB, ARGON_T, ARGON_P, Some(KEY_LEN))
+        Self::from_passphrase_with_params(passphrase, salt, ARGON_M_KIB, ARGON_T, ARGON_P)
+    }
+
+    /// Like [`from_passphrase`](Self::from_passphrase) with explicit Argon2id
+    /// parameters (memory in KiB, iterations, lanes). Used for the vault key,
+    /// whose parameters are stored with the vault so they can be raised later.
+    pub fn from_passphrase_with_params(
+        passphrase: &str,
+        salt: &[u8; SALT_LEN],
+        memory_kib: u32,
+        iterations: u32,
+        parallelism: u32,
+    ) -> Result<Self, Error> {
+        let params = Params::new(memory_kib, iterations, parallelism, Some(KEY_LEN))
             .map_err(|_| Error::KeyDerivation)?;
         let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let mut bytes = [0u8; KEY_LEN];
@@ -101,6 +114,47 @@ mod tests {
         // Pins the Argon2id parameters: if this fails, derived keys changed.
         let k = ChatKey::from_passphrase("correct horse", &SALT).unwrap();
         assert_eq!(k.fingerprint(), "9449-1831");
+    }
+
+    #[test]
+    fn default_params_match_with_params() {
+        let a = ChatKey::from_passphrase("correct horse", &SALT).unwrap();
+        let b = ChatKey::from_passphrase_with_params(
+            "correct horse",
+            &SALT,
+            ARGON_M_KIB,
+            ARGON_T,
+            ARGON_P,
+        )
+        .unwrap();
+        assert_eq!(a.as_bytes(), b.as_bytes());
+    }
+
+    #[test]
+    fn with_params_is_deterministic() {
+        let a = ChatKey::from_passphrase_with_params("pw", &SALT, 8 * 1024, 1, 1).unwrap();
+        let b = ChatKey::from_passphrase_with_params("pw", &SALT, 8 * 1024, 1, 1).unwrap();
+        assert_eq!(a.as_bytes(), b.as_bytes());
+    }
+
+    #[test]
+    fn different_params_diverge() {
+        let a = ChatKey::from_passphrase_with_params("pw", &SALT, 8 * 1024, 1, 1).unwrap();
+        let b = ChatKey::from_passphrase_with_params("pw", &SALT, 8 * 1024, 2, 1).unwrap();
+        let c = ChatKey::from_passphrase_with_params("pw", &SALT, 16 * 1024, 1, 1).unwrap();
+        assert_ne!(a.as_bytes(), b.as_bytes());
+        assert_ne!(a.as_bytes(), c.as_bytes());
+    }
+
+    #[test]
+    fn invalid_params_are_rejected() {
+        // Argon2 requires memory >= 8 * parallelism and non-zero iterations/lanes.
+        for (m, t, p) in [(1, 1, 1), (8 * 1024, 0, 1), (8 * 1024, 1, 0)] {
+            assert!(matches!(
+                ChatKey::from_passphrase_with_params("pw", &SALT, m, t, p),
+                Err(Error::KeyDerivation)
+            ));
+        }
     }
 
     #[test]

@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The only things the CipherChat window may do: call the app's own commands and listen for events.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "allow-status",
+    "allow-create-vault",
+    "allow-unlock",
+    "allow-lock",
+    "allow-list-keys",
+    "allow-add-key",
+    "allow-rename-key",
+    "allow-delete-key",
+    "allow-export-key",
+    "allow-encrypt",
+    "allow-decrypt",
+    "allow-copy-to-clipboard",
+    "allow-get-clipboard-settings",
+    "allow-set-clipboard-settings",
+    "allow-paste-and-decrypt",
+    "allow-touch",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

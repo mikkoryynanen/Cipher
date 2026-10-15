@@ -1,0 +1,16 @@
+status
+create_vault
+unlock
+lock
+list_keys
+add_key
+rename_key
+delete_key
+export_key
+encrypt
+decrypt
+copy_to_clipboard
+get_clipboard_settings
+set_clipboard_settings
+paste_and_decrypt
+touch

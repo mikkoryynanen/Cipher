@@ -1,7 +1,7 @@
 # cipherchat core
 
-Pure-Rust, I/O-free text encryption for CipherChat. Reused by the WASM wrapper
-(browser extension) and, later, the mobile crate.
+Pure-Rust, I/O-free text encryption for CipherChat. Used by the desktop app
+(and, until it is removed, the WASM wrapper for the browser extension).
 
 ## API
 
@@ -9,6 +9,7 @@ Pure-Rust, I/O-free text encryption for CipherChat. Reused by the WASM wrapper
 |------|---------|
 | `ChatKey::generate()` | Random 256-bit key |
 | `ChatKey::from_passphrase(pass, &salt)` | Argon2id-derived key (same passphrase + salt → same key) |
+| `ChatKey::from_passphrase_with_params(pass, &salt, m_kib, t, p)` | Same, with explicit Argon2id parameters (used for the vault key) |
 | `ChatKey::random_salt()` | 16-byte salt to share out of band with the passphrase |
 | `ChatKey::key_id()` / `fingerprint()` | 4-byte key ID / `abcd-ef01` display form |
 | `encrypt(&key, text)` | Plaintext → `🔒1.<base64url>` |
@@ -29,6 +30,11 @@ Errors: `NotOurFormat`, `UnknownVersion`, `WrongKey`, `Tampered` (plus
 - AAD: `version ‖ key_id` (altering either fails authentication).
 - `key_id`: first 4 bytes of `SHA-256("cipherchat/key-id/v1" ‖ key)`.
 - Passphrase keys: Argon2id, m = 19 MiB, t = 2, p = 1, 16-byte salt, 32-byte output.
+  These parameters are fixed because the same passphrase and salt must give the same
+  key on every device.
+- Vault keys (desktop app): derived with `from_passphrase_with_params`. The app uses a
+  stronger setting (initially m = 64 MiB, t = 3, p = 1) and stores the parameters inside
+  the vault file, so they can be raised later without breaking existing vaults.
 
 Decryption order: prefix/base64/length (`NotOurFormat`) → version
 (`UnknownVersion`) → key ID (`WrongKey`) → AEAD (`Tampered`).

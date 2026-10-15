@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "wasm"]
+members = ["core", "wasm", "desktop/src-tauri"]
 
 [profile.release]
 opt-level = "s"
